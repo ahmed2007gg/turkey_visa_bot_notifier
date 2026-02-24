@@ -2,7 +2,6 @@ import json
 import logging
 import asyncio
 import os
-import re
 import requests
 from datetime import datetime
 from typing import Set, Dict
@@ -49,7 +48,7 @@ def save_subs(data: Set[int]):
     except Exception as e:
         logger.error(f"Error saving subscribers: {e}")
 
-# إدارة حالة المواعيد (لمنع تكرار الإشعارات لنفس الموعد)
+# إدارة حالة المواعيد
 def load_state() -> Dict[str, list]:
     if os.path.exists(STATE_FILE):
         try:
@@ -71,7 +70,6 @@ def fetch_available_dates(url: str) -> list:
     try:
         response = requests.get(url, headers=HEADERS, timeout=20)
         if response.status_code != 200:
-            logger.error(f"Failed to fetch {url}, status: {response.status_code}")
             return []
         
         soup = BeautifulSoup(response.text, "html.parser")
@@ -80,12 +78,9 @@ def fetch_available_dates(url: str) -> list:
         
         for row in rows:
             text = row.get_text(" ", strip=True)
-            # المواعيد المتاحة عادة تحتوي على كلمة "Available" أو لا تحتوي على "Reserved"
-            # بناءً على الكود السابق للمستخدم والتحليل:
             if "Available" in text:
                 available_dates.append(text)
             elif any(c.isdigit() for c in text) and "Reserved" not in text and len(text) > 5:
-                # هذا النمط للأيام التي تظهر كتاريخ فقط دون "Reserved"
                 available_dates.append(text)
                 
         return available_dates
@@ -113,7 +108,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         welcome_msg = "أنت مشترك بالفعل! سأوافيك بكل جديد فور توفره."
-    
     await update.message.reply_text(welcome_msg)
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -122,12 +116,12 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat_id in subs:
         subs.discard(chat_id)
         save_subs(subs)
-        await update.message.reply_text("تم إلغاء الاشتراك ❌. لن تصلك إشعارات بعد الآن.")
+        await update.message.reply_text("تم إلغاء الاشتراك ❌.")
     else:
-        await update.message.reply_text("أنت غير مشترك أصلاً.")
+        await update.message.reply_text("أنت غير مشترك.")
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("البوت يعمل بنجاح 🟢 ويقوم بفحص المواعيد كل 5 دقائق.")
+    await update.message.reply_text("البوت يعمل بنجاح 🟢 ويقوم بفحص المواعيد دورياً.")
 
 async def get_dates(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = load_state()
@@ -142,67 +136,40 @@ async def get_dates(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = (
-        "📋 أوامر البوت:\n\n"
-        "/start - الاشتراك في الإشعارات\n"
-        "/stop - إيقاف الإشعارات\n"
-        "/status - حالة البوت\n"
-        "/dates - عرض آخر المواعيد المعروفة\n"
-        "/help - عرض هذه الرسالة"
-    )
+    help_text = "📋 أوامر البوت:\n/start, /stop, /status, /dates, /help"
     await update.message.reply_text(help_text)
 
-# المهمة الدورية للفحص
-async def check_loop(app: Application):
-    logger.info("Starting check loop...")
-    while True:
-        try:
-            subs = load_subs()
-            if not subs:
-                logger.info("No subscribers, skipping check.")
-                await asyncio.sleep(CHECK_INTERVAL)
-                continue
-
-            last_state = load_state()
-            new_state = {}
-            notifications = []
-
-            for city, url in CALENDARS.items():
-                current_dates = fetch_available_dates(url)
-                new_state[city] = current_dates
-                
-                # تحديد المواعيد الجديدة فعلياً (التي لم تكن موجودة في الفحص السابق)
-                old_dates = set(last_state.get(city, []))
-                truly_new = [d for d in current_dates if d not in old_dates]
-                
-                if truly_new:
-                    notifications.append(f"🚨 مواعيد جديدة متاحة في {city}:\n" + "\n".join([f"✅ {d}" for d in truly_new]))
-
-            if notifications:
-                full_msg = "\n\n".join(notifications) + "\n\n🏃‍♂️ سارع بالحجز فوراً عبر الموقع!"
-                for chat_id in subs:
-                    try:
-                        await app.bot.send_message(chat_id=chat_id, text=full_msg)
-                    except Exception as e:
-                        logger.error(f"Failed to send message to {chat_id}: {e}")
-                
-                # تحديث الحالة فقط عند وجود تغيير
-                save_state(new_state)
-            else:
-                logger.info("No new dates found.")
-
-        except Exception as e:
-            logger.error(f"Error in check loop: {e}")
-        
-        await asyncio.sleep(CHECK_INTERVAL)
-
-# تشغيل البوت
-async def main():
-    if not BOT_TOKEN:
-        logger.error("BOT_TOKEN is missing!")
+# المهمة الدورية باستخدام JobQueue
+async def check_for_updates(context: ContextTypes.DEFAULT_TYPE):
+    subs = load_subs()
+    if not subs:
         return
 
-    # بناء التطبيق
+    last_state = load_state()
+    new_state = {}
+    notifications = []
+
+    for city, url in CALENDARS.items():
+        current_dates = fetch_available_dates(url)
+        new_state[city] = current_dates
+        
+        old_dates = set(last_state.get(city, []))
+        truly_new = [d for d in current_dates if d not in old_dates]
+        
+        if truly_new:
+            notifications.append(f"🚨 مواعيد جديدة متاحة في {city}:\n" + "\n".join([f"✅ {d}" for d in truly_new]))
+
+    if notifications:
+        full_msg = "\n\n".join(notifications) + "\n\n🏃‍♂️ سارع بالحجز فوراً عبر الموقع!"
+        for chat_id in subs:
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=full_msg)
+            except Exception as e:
+                logger.error(f"Failed to send to {chat_id}: {e}")
+        save_state(new_state)
+
+def main():
+    # بناء التطبيق مع دعم JobQueue (يأتي افتراضياً مع python-telegram-bot)
     application = Application.builder().token(BOT_TOKEN).build()
 
     # إضافة الأوامر
@@ -212,17 +179,13 @@ async def main():
     application.add_handler(CommandHandler("dates", get_dates))
     application.add_handler(CommandHandler("help", help_command))
 
-    # بدء المهمة الدورية في الخلفية
-    asyncio.create_task(check_loop(application))
+    # جدولة المهمة الدورية
+    job_queue = application.job_queue
+    job_queue.run_repeating(check_for_updates, interval=CHECK_INTERVAL, first=10)
 
     # تشغيل البوت
     logger.info("Bot is starting...")
-    await application.run_polling()
+    application.run_polling()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
-    except Exception as e:
-        logger.error(f"Fatal error: {e}")
+    main()

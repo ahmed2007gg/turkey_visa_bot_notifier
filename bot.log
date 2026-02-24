@@ -1,0 +1,8 @@
+nohup: ignoring input
+2026-02-24 06:24:44,397 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-02-24 06:24:44,397 - __main__ - INFO - Bot is starting...
+2026-02-24 06:24:46,364 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8329563352:AAFO7RcTJoBFzV7llClLi-QijzSWHMR75Rg/getMe "HTTP/1.1 200 OK"
+2026-02-24 06:24:46,838 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8329563352:AAFO7RcTJoBFzV7llClLi-QijzSWHMR75Rg/deleteWebhook "HTTP/1.1 200 OK"
+2026-02-24 06:24:46,839 - apscheduler.scheduler - INFO - Added job "check_for_updates" to job store "default"
+2026-02-24 06:24:46,839 - apscheduler.scheduler - INFO - Scheduler started
+2026-02-24 06:24:46,840 - telegram.ext.Application - INFO - Application started
